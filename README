@@ -1,0 +1,15 @@
+= How To Use =
+
+$ cmake .
+$ make
+$ ./greatfd &
+
+
+$ ls logs
+$ firefox www.example.com &
+$ ls logs
+$ cat logs/monitor.log
+$ firefox ...
+$ ...
+$ ps
+$ kill ...
