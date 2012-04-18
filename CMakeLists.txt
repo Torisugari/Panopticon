@@ -17,4 +17,4 @@ LINK_LIBRARIES(${ATSPI2_LIBRARIES})
 
 set(CMAKE_C_FLAGS "-Wall -O2")
 set(CMAKE_CXX_FLAGS "-Wall -O2")
-add_executable(greatfd src/main.cpp)
+add_executable(greatfd src/greatfd.cpp)
