@@ -75,8 +75,6 @@ void documentLoadListener(const AtspiEvent *aEvent);
 static const char kCensorList[]     = "settings/censor.lst";
 static const char kCensorLogFile[]  = "logs/censor.log";
 
-bool censorChildren(AtspiAccessible* aParent, const char* aKeyword);
-
 /* singly linked list */
 typedef struct _CensorWordList {
   const char* data;
@@ -87,6 +85,10 @@ typedef struct _TextFragmentList {
   char* data;
   _TextFragmentList* next;
 } TextFragmentList;
+
+TextFragmentList* extractTextFragments(AtspiAccessible* aParent,
+                                       TextFragmentList* aLatestNode);
+bool censor(const TextFragmentList* aFragment, const char* aKeyword);
 
 const CensorWordList* gCensorWordList(NULL);
 #endif
@@ -248,9 +250,9 @@ void documentLoadListener(const AtspiEvent *aEvent) {
 #else
   FILE* fp = stdout;
 #endif
-  int cnt = fprintf(fp, "d=%s+0000\nt=%s\nu=%s\n\n", datetime, title, url);
+  int count = fprintf(fp, "d=%s+0000\nt=%s\nu=%s\n\n", datetime, title, url);
 
-  if (cnt < 0) {
+  if (count < 0) {
     perror(kMonitorLogFile);
   }
 
@@ -259,9 +261,11 @@ void documentLoadListener(const AtspiEvent *aEvent) {
 #endif
 
 #ifdef GFD_ENABLE_CENSORING
-  const CensorWordList* node = gCensorWordList;
-  while(node) {
-    bool hit = censorChildren(aEvent->source, node->data);
+  const CensorWordList* censorNode = gCensorWordList;
+  TextFragmentList* fragmentNode = extractTextFragments(aEvent->source, NULL);
+
+  while(censorNode) {
+    bool hit = censor(fragmentNode, censorNode->data);
     if (hit) {
       fp = fopen(kCensorLogFile, "a");
       if (!fp) {
@@ -269,14 +273,23 @@ void documentLoadListener(const AtspiEvent *aEvent) {
         break;
       }
 
-      cnt = fprintf(fp, "k=%s\nd=%s+0000\nt=%s\nu=%s\n\n",
-                    node->data, datetime, title, url);
-      if (cnt < 0) {
+      count = fprintf(fp, "k=%s\nd=%s+0000\nt=%s\nu=%s\n\n",
+                      censorNode->data, datetime, title, url);
+      if (count < 0) {
         perror(kCensorLogFile);
       }
       fclose(fp);
     }
-    node = node->next;
+    censorNode = censorNode->next;
+  }
+
+  /* release memory allocated by g_strdup(). */
+  while (fragmentNode) {
+    TextFragmentList* oldNode = fragmentNode;
+    fragmentNode = fragmentNode->next;
+
+    g_free(oldNode->data);
+    delete oldNode;
   }
 #endif
 
@@ -294,24 +307,34 @@ void documentLoadListener(const AtspiEvent *aEvent) {
   return;
 }
 
+
+
 #ifdef GFD_ENABLE_CENSORING
-/* In terms of performance, I should cache all the text data instead. */
-bool censorChildren(AtspiAccessible* aParent, const char* aKeyword) {
+bool censor(const TextFragmentList* aFragment, const char* aKeyword) {
+  const TextFragmentList* fragment = aFragment;
+  while (fragment) {
+    assert(fragment->data);
+    if (strcasestr(fragment->data, aKeyword))
+      return true;
+    fragment = fragment->next;
+  }
+  return false;
+}
+
+TextFragmentList* extractTextFragments(AtspiAccessible* aParent,
+                                       TextFragmentList* aLatestNode) {
   if (!aParent)
-    return false;
+    return aLatestNode;
 
-  assert(!!aKeyword);
-
-  bool result(false);
   GError* error(NULL);
-
   int count = atspi_accessible_get_child_count(aParent, &error);
   if (error) {
     fprintf(stderr, "%s:%s\n", kProductName, error->message);
     g_error_free(error);
-    error = NULL;
-    return false;
+    return aLatestNode;
   }
+
+  TextFragmentList* result(aLatestNode);
 
   int i;
   for (i = 0; i < count; i++){
@@ -329,8 +352,19 @@ bool censorChildren(AtspiAccessible* aParent, const char* aKeyword) {
       int end = atspi_text_get_character_count(text, &error);
       if (!error) {
         char* ptr = atspi_text_get_text(text, 0, end, &error);
-        result = !!(::strcasestr(ptr, aKeyword));
-        g_free(ptr);
+        if (error) {
+          fprintf(stderr, "%s:%s\n", kProductName, error->message);
+          g_error_free(error);
+          error = NULL;
+          if (ptr)
+            g_free(ptr);
+        }
+        else if (ptr) {
+          TextFragmentList* node = new TextFragmentList();
+          node->data = ptr;
+          node->next = result;
+          result = node;
+        }
       } else {
         fprintf(stderr, "%s:%s\n", kProductName, error->message);
         g_error_free(error);
@@ -338,15 +372,8 @@ bool censorChildren(AtspiAccessible* aParent, const char* aKeyword) {
       }
       g_object_unref(text);
     }
-
-    if (!result) {
-      result = censorChildren(child, aKeyword);
-    }
-
-    if (result)
-      return true;
+    result = extractTextFragments(child, result);
   }
-
-  return false;
+  return result;
 }
 #endif
