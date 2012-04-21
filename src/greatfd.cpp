@@ -46,15 +46,17 @@
  * Note: The way to exit is not implemented yet. Type Ctrl-C, ps & kill or
  *       gnome-system-monitor instead.
  */
-
 #define GFD_ENABLE_CENSORING
 #define GFD_USE_ATTR_HASHTABLE
 //#define GFD_STOP_MONITORING_LOG
-//#define NODEBUG
+
+/* 1000 is apparently too small. HTML documents are compliecated these days. */
+#define GFD_FRAGMENT_RECURSION_LIMIT 10000
 
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <assert.h>
 #include <time.h>
 
@@ -87,7 +89,9 @@ typedef struct _TextFragmentList {
 } TextFragmentList;
 
 TextFragmentList* extractTextFragments(AtspiAccessible* aParent,
-                                       TextFragmentList* aLatestNode);
+                                       TextFragmentList* aLatestNode,
+                                       int* aRecursionCount);
+
 bool censor(const TextFragmentList* aFragment, const char* aKeyword);
 
 const CensorWordList* gCensorWordList(NULL);
@@ -147,6 +151,17 @@ int main(int argc, char* argv[]) {
       }
       line = strtok_r(NULL, "\n", &next);
     }
+
+    int i;
+    for(i = 1; i < argc; i++) {
+      if (char(*argv[i]) != '\0') {
+        CensorWordList* node = new CensorWordList();
+        node->data = argv[i];
+        node->next = latestNode;
+        latestNode = node;
+      }
+    }
+
     gCensorWordList = latestNode;
   }
 #endif
@@ -177,6 +192,26 @@ int main(int argc, char* argv[]) {
   return atspi_exit();
 }
 
+
+inline void flogf(const char* aFilename, const char* aFormat, ...) {
+  /* This is a little dangerous for compiler doesn't check arg types. */
+  FILE* fp = fopen(aFilename, "a");
+  if (!fp) {
+    perror(aFilename);
+    return;
+  }
+
+  va_list args;
+  va_start(args, aFormat);
+  int count = vfprintf(fp, aFormat, args);
+  va_end(args);
+
+  if (count < 0) {
+    perror(aFilename);
+  }
+  fclose(fp);
+}
+
 void documentLoadListener(const AtspiEvent *aEvent) {
   /* abort if event target is not browser's dom window. */
   GError* error(NULL);
@@ -195,40 +230,41 @@ void documentLoadListener(const AtspiEvent *aEvent) {
   if (!document)
     return;
 
-
   /* Query title */
   char* title = atspi_accessible_get_name(aEvent->source, &error);
   if (error) {
     fprintf(stderr, "%s:%s\n", kProductName, error->message);
     g_error_free(error);
-    return;
+    title = NULL;
   }
 
   /* Query URL */
 #ifndef GFD_USE_ATTR_HASHTABLE
   // XXX I wonder why this won't work...
   //     By the way, what's "GetAttributevaluee"? typo?
+  // XXX OK, this is acutally a typo and a bug.
+  //     Report+patch: https://bugzilla.gnome.org/show_bug.cgi?id=674515
   static char attr[] = "DocURL"; // to avoid cast
   gchar* url = atspi_document_get_attribute_value(document, attr, &error);
   if (!!error) {
     fprintf(stderr, "%s:%s\n",kProductName, error->message);
     g_error_free(error);
-    return;
+    url = null;
   }
 #else
+  char* url(NULL);
   GHashTable* attributes = atspi_document_get_attributes(document, &error);
   g_object_unref(document);
 
   if (error) {
     fprintf(stderr, "%s:%s\n", kProductName, error->message);
     g_error_free(error);
-    return;
   }
-
-  void* value = g_hash_table_lookup(attributes, "DocURL");
-  g_object_unref(document);
-
-  char* url = static_cast<char*>(value);
+  else {
+    void* value = g_hash_table_lookup(attributes, "DocURL");
+    g_object_unref(document);
+    url = static_cast<char*>(value);
+  }
 #endif
 
   /* Compose ISO 8601 datetime */
@@ -242,43 +278,23 @@ void documentLoadListener(const AtspiEvent *aEvent) {
 
   /* Write them down. */
 #ifndef GFD_STOP_MONITORING_LOG
-  FILE* fp = fopen(kMonitorLogFile, "a");
-  if (!fp) {
-    perror(kMonitorLogFile);
-    return;
-  }
+  flogf(kMonitorLogFile, "d=%s+0000\nt=%s\nu=%s\n\n", datetime, title, url);
 #else
-  FILE* fp = stdout;
-#endif
-  int count = fprintf(fp, "d=%s+0000\nt=%s\nu=%s\n\n", datetime, title, url);
-
-  if (count < 0) {
-    perror(kMonitorLogFile);
-  }
-
-#ifndef GFD_STOP_MONITORING_LOG
-  fclose(fp);
+  printf("d=%s+0000\nt=%s\nu=%s\n\n", datetime, title, url);
 #endif
 
 #ifdef GFD_ENABLE_CENSORING
   const CensorWordList* censorNode = gCensorWordList;
-  TextFragmentList* fragmentNode = extractTextFragments(aEvent->source, NULL);
+  int recursionCount = 0;
+
+  TextFragmentList* fragmentNode = extractTextFragments(aEvent->source, NULL,
+                                                        &recursionCount);
 
   while(censorNode) {
     bool hit = censor(fragmentNode, censorNode->data);
     if (hit) {
-      fp = fopen(kCensorLogFile, "a");
-      if (!fp) {
-        perror(kCensorLogFile);
-        break;
-      }
-
-      count = fprintf(fp, "k=%s\nd=%s+0000\nt=%s\nu=%s\n\n",
-                      censorNode->data, datetime, title, url);
-      if (count < 0) {
-        perror(kCensorLogFile);
-      }
-      fclose(fp);
+      flogf(kCensorLogFile, "k=%s\nd=%s+0000\nt=%s\nu=%s\n\n",
+            censorNode->data, datetime, title, url);
     }
     censorNode = censorNode->next;
   }
@@ -293,21 +309,18 @@ void documentLoadListener(const AtspiEvent *aEvent) {
   }
 #endif
 
-  g_free(title);
+  if (title)
+    g_free(title);
 
 #ifndef GFD_USE_ATTR_HASHTABLE
-  g_free(url);
+  if (url)
+    g_free(url);
 #else
   g_hash_table_unref(attributes);
 #endif
 
-  // Seriously, is there any way to delete the cached |AtspiAccessible|
-  // objects?
-  // atspi_accessible_clear_cache(aEvent->source); ?
   return;
 }
-
-
 
 #ifdef GFD_ENABLE_CENSORING
 bool censor(const TextFragmentList* aFragment, const char* aKeyword) {
@@ -322,7 +335,16 @@ bool censor(const TextFragmentList* aFragment, const char* aKeyword) {
 }
 
 TextFragmentList* extractTextFragments(AtspiAccessible* aParent,
-                                       TextFragmentList* aLatestNode) {
+                                       TextFragmentList* aLatestNode,
+                                       int* aRecursionCount) {
+  if ((*aRecursionCount) > GFD_FRAGMENT_RECURSION_LIMIT) {
+    fprintf(stderr, "%s:extractTextFragments():Too many recursive calls.\n",
+            kProductName);
+    return aLatestNode;
+  }
+
+  (*aRecursionCount)++;
+
   if (!aParent)
     return aLatestNode;
 
@@ -372,7 +394,7 @@ TextFragmentList* extractTextFragments(AtspiAccessible* aParent,
       }
       g_object_unref(text);
     }
-    result = extractTextFragments(child, result);
+    result = extractTextFragments(child, result, aRecursionCount);
   }
   return result;
 }
