@@ -15,6 +15,13 @@ INCLUDE_DIRECTORIES(${ATSPI2_INCLUDE_DIRS})
 LINK_DIRECTORIES(${ATSPI2_LIBRARY_DIRS})
 LINK_LIBRARIES(${ATSPI2_LIBRARIES})
 
+# Path to <dbus/dbus-glib-lowlevel.h> and <libdbus-glib-1.so>
+pkg_check_modules(DBUSGLIB1 dbus-glib-1)
+#INCLUDE_DIRECTORIES(${DBUSGLIB1_INCLUDE_DIRS})
+LINK_DIRECTORIES(${DBUSGLIB1_LIBRARY_DIRS})
+LINK_LIBRARIES(${DBUSGLIB1_LIBRARIES})
+
+
 set(CMAKE_C_FLAGS "-Wall")
 set(CMAKE_CXX_FLAGS "-Wall")
 
@@ -31,3 +38,4 @@ set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")
 
 add_executable(greatfd src/greatfd.cpp)
+add_executable(smallfd src/smallfd.cpp)
