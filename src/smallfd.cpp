@@ -24,10 +24,10 @@
 
 #include <assert.h>
 #include <mcheck.h>
+#include <unistd.h>
 
 extern "C" {
 #include <dbus/dbus.h> 
-#include <glib.h>
 }
 
 static const char kProductName[]    = "great firedaemon";
@@ -152,7 +152,6 @@ void gfdDumpConnection(DBusConnection* aConnection,
   if (!success)
     pid = 0;
 
-
   printf(" *** L%d @ %s ***\n"
          " *DBusConnection*: 0x%x\n"
          " *unique name    : %s\n"
@@ -192,126 +191,23 @@ void gfdDumpConnection(DBusConnection* aConnection,
 
 
 namespace gfd {
-void wakeup(void* aUserData) {
-  assert(aUserData);
-  g_main_context_wakeup(static_cast<GMainContext*>(aUserData));
-}
-
-gboolean handle_watch(GIOChannel* aSource, GIOCondition aCondition,
-                      void* aUserData) {
-  assert(aUserData);
-
-  DBusWatch* watch = static_cast<DBusWatch*>(aUserData);
-  unsigned int flags = dbus_watch_get_flags(watch);
-
-  assert((!!(flags & DBUS_WATCH_READABLE)) == (!!(aCondition & G_IO_IN)));
-  assert((!!(flags & DBUS_WATCH_WRITABLE)) == (!!(aCondition & G_IO_OUT)));
-
-  dbus_watch_handle(watch, flags);
-  return TRUE;
-}
-
-void unref_source(void* aUserData) {
-  assert(aUserData);
-  GSource* source = static_cast<GSource*>(aUserData);
-  g_source_destroy(source);
-  g_source_unref(source);
-}
-
-dbus_bool_t add_watch(DBusWatch* aWatch, void* aUserData) {
-  if (!dbus_watch_get_enabled(aWatch))
-    return TRUE;
-
-  void* data = dbus_watch_get_data(aWatch);
-  GSource* source(NULL);
-
-  if (data) {
-    source = static_cast<GSource*>(data);
-  }
-  else {
-    int fd = dbus_watch_get_unix_fd(aWatch);
-    GIOChannel* channel = g_io_channel_unix_new(fd);
-    unsigned int condition = (G_IO_ERR | G_IO_HUP);
-    unsigned int flags = dbus_watch_get_flags(aWatch);
-
-    if (flags & DBUS_WATCH_READABLE)
-      condition |= G_IO_IN;
-
-    if (flags & DBUS_WATCH_WRITABLE)
-      condition |= G_IO_OUT;
-
-    source = g_io_create_watch(channel, GIOCondition(condition));
-
-    /*
-     * XXX The cast (GIOFunc -> GSourceFunc) is extremely evil. Probably
-     *     the intension of the lib designer would be "Use g_io_add_watch(...)
-     *     instead", but that will cause loading 40KB of memory which this
-     *     app don't use at all. Anyway this makes me uneasy. In the first
-     *     place, why can't I find out the document saying this conversion
-     *     is safe?
-     */
-    g_source_set_callback(source, reinterpret_cast<GSourceFunc>(handle_watch),
-                          aWatch, NULL);
-    g_io_channel_unref (channel);
-
-    dbus_watch_set_data(aWatch, source, unref_source);
-  }
-
-  g_source_attach(source, static_cast<GMainContext*>(aUserData));
-  return TRUE;
-}
-
-static void remove_watch(DBusWatch* aWatch, void* aUserData) {
-  void* data = dbus_watch_get_data(aWatch);
-  if (!data)
+void checkerror(DBusError* aError, int aLine, const char* aFile) {
+  if (!dbus_error_is_set(aError))
     return;
 
-  GSource* source = static_cast<GSource*>(data);
-  g_source_destroy(source);
-  g_source_unref(source);
-  dbus_watch_set_data(aWatch, NULL, NULL);
+  fprintf(stderr, "%s: L%d @ %s\n%s\n",
+          kProductName, aLine, aFile, aError->message);
+
+  dbus_error_free(aError);
 }
 
-typedef struct _GSourceWithDBusConnection : public GSource {
-  DBusConnection* mConnection;
-} GSourceWithDBusConnection;
-
-gboolean prepare (GSource* aSource, gint* aTimeout) {
-  assert(aSource);
-  assert(aTimeout);
-
-  *aTimeout = -1;
-
-  GSourceWithDBusConnection* source =
-    static_cast<GSourceWithDBusConnection*>(aSource);
-
-  DBusDispatchStatus status =
-    dbus_connection_get_dispatch_status(source->mConnection);
-
-  return (DBUS_DISPATCH_DATA_REMAINS == status); 
-}
-
-gboolean check (GSource* aSource) {
-  return FALSE;
-}
-
-gboolean dispatch(GSource* aSource, GSourceFunc aCallback,
-                         void* aUserData) {
-  assert(aSource);
-
-  GSourceWithDBusConnection* source =
-    static_cast<GSourceWithDBusConnection*>(aSource);
-
-  GFD_DUMP_DBUS_CONNECTION(source->mConnection);
-
-  dbus_connection_dispatch(source->mConnection);
-  return TRUE;
-}
 
 } /* namespace gfd:: */
 
-int main(int argc, char* argv[]) {
+#define GFD_CHECK_DBUS_ERROR(__DBUSERROR__) \
+  gfd::checkerror((__DBUSERROR__), (__LINE__), (__FILE__))
 
+int main(int argc, char* argv[]) {
   DBusError error;
   dbus_error_init(&error);
 
@@ -339,10 +235,7 @@ int main(int argc, char* argv[]) {
                                                 &error);
     dbus_message_unref(method);
 
-    if (dbus_error_is_set(&error)) {
-      fprintf(stderr, "%s:%s\n", kProductName, error.message); 
-      dbus_error_free(&error);
-    }
+    GFD_CHECK_DBUS_ERROR(&error);
 
     if(!response)
       return 1;
@@ -354,10 +247,7 @@ int main(int argc, char* argv[]) {
                                           DBUS_TYPE_STRING, &atspiBusAddress,
                                           DBUS_TYPE_INVALID);
 
-    if (dbus_error_is_set(&error)) {
-      fprintf(stderr, "%s:%s\n", kProductName, error.message);
-      dbus_error_free(&error);
-    }
+    GFD_CHECK_DBUS_ERROR(&error);
 
     if (!appended) {
       dbus_message_unref(response);
@@ -372,19 +262,13 @@ int main(int argc, char* argv[]) {
 
     dbus_message_unref(response);
 
-    if (dbus_error_is_set(&error)) {
-      fprintf(stderr, "%s:%s\n", kProductName, error.message);
-      dbus_error_free(&error);
-    }
+    GFD_CHECK_DBUS_ERROR(&error);
 
     if (!connection)
       return 1;
 
     appended = dbus_bus_register(connection, &error);
-    if (dbus_error_is_set(&error)) {
-      fprintf(stderr, "%s:%s\n", kProductName, error.message);
-      dbus_error_free(&error);
-    }
+    GFD_CHECK_DBUS_ERROR(&error);
 
     if (!appended) {
       dbus_connection_unref(connection);
@@ -404,8 +288,6 @@ int main(int argc, char* argv[]) {
     dbus_connection_unref(connection);
     return 1;
   }
-
-  dbus_connection_add_filter(connection, filter, NULL, NULL);
 
   {
     DBusMessage* method =
@@ -436,10 +318,7 @@ int main(int argc, char* argv[]) {
                                                 &error);
     dbus_message_unref(method);
 
-    if (dbus_error_is_set(&error)) {
-      fprintf(stderr, "%s:%s\n", kProductName, error.message); 
-      dbus_error_free(&error);
-    }
+    GFD_CHECK_DBUS_ERROR(&error);
 
     if (response) {
       GFD_DUMP_DBUS_MESSAGE(response);
@@ -447,35 +326,65 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  GMainContext* context = g_main_context_default();
-  GMainLoop* loop = g_main_loop_new(context, false);
+  for (;;) {
+    dbus_connection_read_write_dispatch(connection, -1);
+    DBusMessage* signal = dbus_connection_pop_message(connection);
 
-  GSourceFuncs withConnectionTable = {
-    gfd::prepare,
-    gfd::check,
-    gfd::dispatch,
-    NULL
-  };
+    if (!signal) {
+      static int life = 20;
+      if ((life--) < 0)
+        break;
 
-  GSource* source =
-    g_source_new(&withConnectionTable, sizeof (gfd::GSourceWithDBusConnection));
-  
-  static_cast<gfd::GSourceWithDBusConnection*>(source)->mConnection =
-    connection;
+      sleep(1);
+      continue;
+    }
 
-  g_source_attach(source, context);
+    DBusHandlerResult result = filter(connection, signal, NULL);
 
-  dbus_connection_set_wakeup_main_function(connection,
-                                           gfd::wakeup,
-                                           context, NULL);
+    dbus_message_unref(signal);
 
-  dbus_connection_set_watch_functions (connection,
-                                       gfd::add_watch,
-                                       gfd::remove_watch,
-                                       NULL, context, NULL);
-  g_main_loop_run(loop);
+    if (result != DBUS_HANDLER_RESULT_HANDLED) {
+      break;
+    }
+  }
 
-  g_source_unref(source);
+  {
+    DBusMessage* method =
+      dbus_message_new_method_call("org.a11y.atspi.Registry",
+                                   "/org/a11y/atspi/registry",
+                                   "org.a11y.atspi.Registry",
+                                   "DeregisterEvent");
+
+    if (!method) {
+      dbus_connection_unref(connection);
+      return 1;
+    }
+
+    static const char* event = "document:load-complete";
+    bool appended = dbus_message_append_args(method,
+                                             DBUS_TYPE_STRING, &event,
+                                             DBUS_TYPE_INVALID);
+
+    if (!appended) {
+      dbus_message_unref(method);
+      dbus_connection_unref(connection);
+      return 1;
+    }
+
+    DBusMessage* response =
+      dbus_connection_send_with_reply_and_block(connection, method,
+                                                DBUS_TIMEOUT_USE_DEFAULT,
+                                                &error);
+    dbus_message_unref(method);
+
+    GFD_CHECK_DBUS_ERROR(&error);
+
+    if (response) {
+      GFD_DUMP_DBUS_MESSAGE(response);
+      dbus_message_unref(response);
+    }
+  }
+
   dbus_connection_unref(connection);
   return 0;
 }
@@ -556,20 +465,14 @@ DBusHandlerResult filter(DBusConnection* aConnection,
 
     dbus_message_unref(method);
 
-    if (dbus_error_is_set(&error)) {
-      fprintf(stderr, "%s:%s\n", kProductName, error.message); 
-      dbus_error_free(&error);
-    }
+    GFD_CHECK_DBUS_ERROR(&error);
 
     if(response) {
       GFD_DUMP_DBUS_MESSAGE(response);
       appended = dbus_message_get_args(response, &error,
                                        DBUS_TYPE_STRING, &url,
                                        DBUS_TYPE_INVALID);
-      if (dbus_error_is_set(&error)) {
-        fprintf(stderr, "%s:%s\n", kProductName, error.message);
-        dbus_error_free(&error);
-      }
+      GFD_CHECK_DBUS_ERROR(&error);
       dbus_message_unref(response);
     }
   }
