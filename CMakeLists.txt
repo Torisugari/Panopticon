@@ -38,4 +38,3 @@ set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")
 
 add_executable(greatfd src/greatfd.cpp)
-add_executable(smallfd src/smallfd.cpp)
