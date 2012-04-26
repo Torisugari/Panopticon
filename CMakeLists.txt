@@ -3,24 +3,10 @@ cmake_minimum_required(VERSION 2.8)
 
 include(FindPkgConfig)
 
-# Path to <glib.h>
-pkg_check_modules(GLIB2 glib-2.0)
-INCLUDE_DIRECTORIES(${GLIB2_INCLUDE_DIRS})
-LINK_DIRECTORIES(${GLIB2_LIBRARY_DIRS})
-LINK_LIBRARIES(${GLIB2_LIBRARIES})
-
-# Path to <atspi/atspi.h> and <libatspi.so>
-pkg_check_modules(ATSPI2 atspi-2)
-INCLUDE_DIRECTORIES(${ATSPI2_INCLUDE_DIRS})
-LINK_DIRECTORIES(${ATSPI2_LIBRARY_DIRS})
-LINK_LIBRARIES(${ATSPI2_LIBRARIES})
-
-# Path to <dbus/dbus-glib-lowlevel.h> and <libdbus-glib-1.so>
-pkg_check_modules(DBUSGLIB1 dbus-glib-1)
-#INCLUDE_DIRECTORIES(${DBUSGLIB1_INCLUDE_DIRS})
-LINK_DIRECTORIES(${DBUSGLIB1_LIBRARY_DIRS})
-LINK_LIBRARIES(${DBUSGLIB1_LIBRARIES})
-
+pkg_check_modules(DBUS dbus-1)
+INCLUDE_DIRECTORIES(${DBUS_INCLUDE_DIRS})
+LINK_DIRECTORIES(${DBUS_LIBRARY_DIRS})
+LINK_LIBRARIES(${DBUS_LIBRARIES})
 
 set(CMAKE_C_FLAGS "-Wall")
 set(CMAKE_CXX_FLAGS "-Wall")

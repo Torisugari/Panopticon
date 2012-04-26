@@ -1,15 +1,21 @@
 = How To Use =
 
 $ cmake .
+$ make release
 $ make
-$ ./greatfd &
 
-
-$ ls logs
 $ firefox www.example.com &
-$ ls logs
 $ cat logs/monitor.log
-$ firefox ...
-$ ...
+$ cat logs/censor.log
+...
 $ ps
 $ kill ...
+
+$ ./greatfd "Voldemort" &
+$ firefox http://en.wikipedia.org/wiki/Harry_Potter &
+$ cat logs/monitor.log
+$ cat logs/censor.log
+...
+$ ps
+$ kill ...
+

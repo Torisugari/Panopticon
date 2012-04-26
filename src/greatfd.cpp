@@ -47,8 +47,8 @@
  *       gnome-system-monitor instead.
  */
 
-#define GFD_READ_CENSORING_LIST 0
-#define GFD_STOP_MONITORING_LOG 1
+#define GFD_READ_CENSOR_LIST 0
+#define GFD_STOP_MONITOR_LOG 0
 
 #include <stddef.h>
 #include <stdbool.h>
@@ -67,7 +67,7 @@ extern "C" {
 
 static const char kProductName[]    = "great firedaemon";
 
-#if GFD_STOP_MONITORING_LOG
+#if GFD_STOP_MONITOR_LOG
 static const char kMonitorLogFile[] = "logs/monitor.log";
 #else
 static const char kMonitorLogFile[] = "/dev/null";
@@ -304,7 +304,7 @@ void checkDBusError(DBusError* aError, int aLine, const char* aFile) {
   (checkDBusError((__DBUSERROR__), (__LINE__), (__FILE__)))
 
 int main(int argc, char* argv[]) {
-#if GFD_ENABLE_CENSORING_LIST
+#if GFD_READ_CENSOR_LIST
   /*
      Note that the life time of this buffer equals to that of
      this application.
@@ -347,7 +347,7 @@ int main(int argc, char* argv[]) {
 
   const CensorWordList* latestNode(NULL);
   {
-#if GFD_READ_CENSORING_LIST
+#if GFD_READ_CENSOR_LIST
     char* next;
     const char* line = strtok_r(buff, "\n", &next);
 
