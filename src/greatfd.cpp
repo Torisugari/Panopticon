@@ -68,9 +68,9 @@ extern "C" {
 static const char kProductName[]    = "great firedaemon";
 
 #if GFD_STOP_MONITOR_LOG
-static const char kMonitorLogFile[] = "logs/monitor.log";
-#else
 static const char kMonitorLogFile[] = "/dev/null";
+#else
+static const char kMonitorLogFile[] = "logs/monitor.log";
 #endif
 
 static const char kCensorList[]     = "settings/censor.lst";
@@ -118,14 +118,16 @@ void gfdDumpIter(DBusMessageIter* aIter, int aIndent) {
     for (i = 0; i < aIndent; i++)
       printf("  ");
     switch (type) {
-    case DBUS_TYPE_STRING: {
+    case DBUS_TYPE_STRING:
+      {
         const char* data(NULL);
         dbus_message_iter_get_basic(aIter, &data);
         printf("type=str, value=\"%s\";\n", data);
       }
       break;
 
-    case DBUS_TYPE_OBJECT_PATH: {
+    case DBUS_TYPE_OBJECT_PATH:
+      {
         const char* data(NULL);
         dbus_message_iter_get_basic(aIter, &data);
         printf("type=path, value=\"%s\";\n", data);
@@ -145,7 +147,8 @@ void gfdDumpIter(DBusMessageIter* aIter, int aIndent) {
       }
       break;
 
-    case DBUS_TYPE_VARIANT: {
+    case DBUS_TYPE_VARIANT:
+      {
         printf("type=var, value= {\n");
 
         DBusMessageIter iter;
@@ -157,7 +160,8 @@ void gfdDumpIter(DBusMessageIter* aIter, int aIndent) {
       }
       break;
 
-    case DBUS_TYPE_STRUCT: {
+    case DBUS_TYPE_STRUCT:
+      {
         printf("type=struct, value= {\n");
 
         DBusMessageIter iter;
@@ -169,7 +173,8 @@ void gfdDumpIter(DBusMessageIter* aIter, int aIndent) {
       }
       break;
 
-    case DBUS_TYPE_ARRAY: {
+    case DBUS_TYPE_ARRAY:
+      {
         printf("type=array, value= [\n");
 
         DBusMessageIter iter;
@@ -303,13 +308,35 @@ void checkDBusError(DBusError* aError, int aLine, const char* aFile) {
 #define GFD_CHECK_DBUS_ERROR(__DBUSERROR__) \
   (checkDBusError((__DBUSERROR__), (__LINE__), (__FILE__)))
 
+#define GFD_A11Y_DESTINATION           "org.a11y.Bus"
+#define GFD_A11Y_PATH                  "/org/a11y/bus"
+#define GFD_A11Y_INTERFACE             "org.a11y.Bus"
+
+#define GFD_ATSPI_REGISTRY_DESTINATION "org.a11y.atspi.Registry"
+#define GFD_ATSPI_REGISTRY_PATH        "/org/a11y/atspi/registry"
+#define GFD_ATSPI_REGISTRY_INTERFACE   "org.a11y.atspi.Registry"
+
+#define GFD_ATSPI_INTERFACE_BASE_      "org.a11y.atspi."
+#define GFD_ATSPI_INTERFACE_ACCESSIBLE GFD_ATSPI_INTERFACE_BASE_ "Accessible"
+#define GFD_ATSPI_INTERFACE_TEXT       GFD_ATSPI_INTERFACE_BASE_ "Text"
+
+namespace gfd {
+namespace atspi {
+namespace interface {
+static const char* const kAccessible = GFD_ATSPI_INTERFACE_ACCESSIBLE;
+static const char* const kDocument   = GFD_ATSPI_INTERFACE_BASE_ "Document";
+static const char* const kText       = GFD_ATSPI_INTERFACE_TEXT;
+}
+}
+}
+
 int main(int argc, char* argv[]) {
 #if GFD_READ_CENSOR_LIST
   /*
      Note that the life time of this buffer equals to that of
      this application.
    */
-  char* buff(NULL); 
+  char* buff(NULL);
   {
     FILE* fp = fopen(kCensorList, "rb"); 
     if (!fp) {
@@ -383,9 +410,9 @@ int main(int argc, char* argv[]) {
 
   /* Query AT-SPI DBUS address */
   {
-    DBusMessage* method = dbus_message_new_method_call("org.a11y.Bus",
-                                                       "/org/a11y/bus",
-                                                       "org.a11y.Bus",
+    DBusMessage* method = dbus_message_new_method_call(GFD_A11Y_DESTINATION,
+                                                       GFD_A11Y_PATH,
+                                                       GFD_A11Y_INTERFACE,
                                                        "GetAddress");
 
     if (!method) {
@@ -407,13 +434,13 @@ int main(int argc, char* argv[]) {
     GFD_DUMP_DBUS_MESSAGE(response);
 
     const char* atspiBusAddress(NULL);
-    bool appended = dbus_message_get_args(response, &error,
-                                          DBUS_TYPE_STRING, &atspiBusAddress,
-                                          DBUS_TYPE_INVALID);
+    bool succeeded = dbus_message_get_args(response, &error,
+                                           DBUS_TYPE_STRING, &atspiBusAddress,
+                                           DBUS_TYPE_INVALID);
 
     GFD_CHECK_DBUS_ERROR(&error);
 
-    if (!appended) {
+    if (!succeeded) {
       dbus_message_unref(response);
       return 1;
     }
@@ -431,13 +458,14 @@ int main(int argc, char* argv[]) {
     if (!connection)
       return 1;
 
-    appended = dbus_bus_register(connection, &error);
+    succeeded = dbus_bus_register(connection, &error);
     GFD_CHECK_DBUS_ERROR(&error);
 
-    if (!appended) {
+    if (!succeeded) {
       dbus_connection_unref(connection);
       return 1;
     }
+    GFD_DUMP_DBUS_CONNECTION(connection);
   }
 
   dbus_bus_add_match(connection,
@@ -445,7 +473,6 @@ int main(int argc, char* argv[]) {
                      "interface='org.a11y.atspi.Event.Document',"
                      "member='LoadComplete'",
                      &error);
-
   if (dbus_error_is_set(&error)) {
     fprintf(stderr, "%s:%s\n", kProductName, error.message); 
     dbus_error_free(&error);
@@ -453,11 +480,12 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  static const char* event = "document:load-complete";
   {
     DBusMessage* method =
-      dbus_message_new_method_call("org.a11y.atspi.Registry",
-                                   "/org/a11y/atspi/registry",
-                                   "org.a11y.atspi.Registry",
+      dbus_message_new_method_call(GFD_ATSPI_REGISTRY_DESTINATION,
+                                   GFD_ATSPI_REGISTRY_PATH,
+                                   GFD_ATSPI_REGISTRY_INTERFACE,
                                    "RegisterEvent");
 
     if (!method) {
@@ -465,12 +493,13 @@ int main(int argc, char* argv[]) {
       return 1;
     }
 
-    static const char* event = "document:load-complete";
-    bool appended = dbus_message_append_args(method,
-                                             DBUS_TYPE_STRING, &event,
-                                             DBUS_TYPE_INVALID);
+    GFD_DUMP_DBUS_MESSAGE(method);
 
-    if (!appended) {
+    bool succeeded = dbus_message_append_args(method,
+                                              DBUS_TYPE_STRING, &event,
+                                              DBUS_TYPE_INVALID);
+
+    if (!succeeded) {
       dbus_message_unref(method);
       dbus_connection_unref(connection);
       return 1;
@@ -514,9 +543,9 @@ int main(int argc, char* argv[]) {
 
   {
     DBusMessage* method =
-      dbus_message_new_method_call("org.a11y.atspi.Registry",
-                                   "/org/a11y/atspi/registry",
-                                   "org.a11y.atspi.Registry",
+      dbus_message_new_method_call(GFD_ATSPI_REGISTRY_DESTINATION,
+                                   GFD_ATSPI_REGISTRY_PATH,
+                                   GFD_ATSPI_REGISTRY_INTERFACE,
                                    "DeregisterEvent");
 
     if (!method) {
@@ -524,12 +553,11 @@ int main(int argc, char* argv[]) {
       return 1;
     }
 
-    static const char* event = "document:load-complete";
-    bool appended = dbus_message_append_args(method,
-                                             DBUS_TYPE_STRING, &event,
-                                             DBUS_TYPE_INVALID);
+    bool succeeded = dbus_message_append_args(method,
+                                              DBUS_TYPE_STRING, &event,
+                                              DBUS_TYPE_INVALID);
 
-    if (!appended) {
+    if (!succeeded) {
       dbus_message_unref(method);
       dbus_connection_unref(connection);
       return 1;
@@ -544,7 +572,7 @@ int main(int argc, char* argv[]) {
     GFD_CHECK_DBUS_ERROR(&error);
 
     if (response) {
-      GFD_DUMP_DBUS_MESSAGE(response);
+      //GFD_DUMP_DBUS_MESSAGE(response);
       dbus_message_unref(response);
     }
   }
@@ -608,16 +636,16 @@ DBusHandlerResult filter(DBusConnection* aConnection,
   {
     DBusMessage* method =
       dbus_message_new_method_call(sender, path,
-                                   "org.a11y.atspi.Document",
+                                   gfd::atspi::interface::kDocument,
                                    "GetAttributeValue");
     if (!method)
       return DBUS_HANDLER_RESULT_NEED_MEMORY;
 
-    static const char* attribute = "DocURL";
-    bool appended = dbus_message_append_args(method,
-                                             DBUS_TYPE_STRING, &attribute,
-                                             DBUS_TYPE_INVALID);
-    if (!appended) {
+    static const char* const attribute = "DocURL";
+    bool succeeded = dbus_message_append_args(method,
+                                              DBUS_TYPE_STRING, &attribute,
+                                              DBUS_TYPE_INVALID);
+    if (!succeeded) {
       dbus_message_unref(method);
       return DBUS_HANDLER_RESULT_NEED_MEMORY;
     }
@@ -634,9 +662,9 @@ DBusHandlerResult filter(DBusConnection* aConnection,
 
     if (urlMessage) {
       GFD_DUMP_DBUS_MESSAGE(urlMessage);
-      appended = dbus_message_get_args(urlMessage, &error,
-                                       DBUS_TYPE_STRING, &url,
-                                       DBUS_TYPE_INVALID);
+      succeeded = dbus_message_get_args(urlMessage, &error,
+                                        DBUS_TYPE_STRING, &url,
+                                        DBUS_TYPE_INVALID);
       GFD_CHECK_DBUS_ERROR(&error);
     }
   }
@@ -671,6 +699,9 @@ DBusHandlerResult filter(DBusConnection* aConnection,
 
     /* release memory allocated by g_strdup(). */
     while (texts) {
+#ifndef NDEBUG
+        printf("%s\n", texts->data);
+#endif
       free(texts->data);
 
       TextFragmentList* oldNode = texts;
@@ -704,20 +735,17 @@ TextFragmentList* copyTexts(DBusConnection* aConnection,
                             const char* aPath,
                             TextFragmentList* aLatestNode) {
 
-  TextFragmentList* result(aLatestNode);
-
   DBusError error;
   dbus_error_init(&error);
 
-  // Check whether this is a text, or not.
   bool isText(false);
   {
     DBusMessage* method =
       dbus_message_new_method_call(aDestination, aPath,
-                                   "org.a11y.atspi.Accessible",
+                                   gfd::atspi::interface::kAccessible,
                                    "GetInterfaces");
     if (!method)
-      return result;
+      return aLatestNode;
 
     DBusMessage* response =
       dbus_connection_send_with_reply_and_block(aConnection,
@@ -737,11 +765,11 @@ TextFragmentList* copyTexts(DBusConnection* aConnection,
         DBusMessageIter siter;
         dbus_message_iter_recurse(&aiter, &siter);
         type = dbus_message_iter_get_arg_type(&siter);
-        const char* interface;
         while (DBUS_TYPE_STRING == type) {
+          const char* interface;
           dbus_message_iter_get_basic(&siter, &interface);
-          if (0 == strncmp("org.a11y.atspi.Text", interface,
-                           sizeof("org.a11y.atspi.Text"))) {
+          if(0 == strncmp(gfd::atspi::interface::kText, interface,
+                          sizeof(GFD_ATSPI_INTERFACE_TEXT))) {
             isText = true;
             break;
           }
@@ -752,6 +780,7 @@ TextFragmentList* copyTexts(DBusConnection* aConnection,
       dbus_message_unref(response);
     }
   }
+
   /* Query URL via DBUS */
   int characterCount(0);
   if (isText) {
@@ -760,19 +789,18 @@ TextFragmentList* copyTexts(DBusConnection* aConnection,
                                     DBUS_INTERFACE_PROPERTIES,
                                     "Get");
     if (!method)
-      return result;
+      return aLatestNode;
 
-    static const char* interface = "org.a11y.atspi.Text";
-    static const char* attribute = "CharacterCount";
+    static const char* const attribute = "CharacterCount";
 
-    bool appended =
+    bool succeeded =
       dbus_message_append_args(method,
-                               DBUS_TYPE_STRING, &interface,
+                               DBUS_TYPE_STRING, &gfd::atspi::interface::kText,
                                DBUS_TYPE_STRING, &attribute,
                                DBUS_TYPE_INVALID);
-    if (!appended) {
+    if (!succeeded) {
       dbus_message_unref(method);
-      return result;
+      return aLatestNode;
     }
 
     DBusMessage* response =
@@ -789,7 +817,7 @@ TextFragmentList* copyTexts(DBusConnection* aConnection,
       dbus_message_iter_init(response, &viter);
       int type = dbus_message_iter_get_arg_type(&viter);
 
-      GFD_DUMP_DBUS_MESSAGE(response);
+      //GFD_DUMP_DBUS_MESSAGE(response);
         if (DBUS_TYPE_VARIANT == type) {
           DBusMessageIter iiter;
           dbus_message_iter_recurse(&viter, &iiter);
@@ -803,24 +831,26 @@ TextFragmentList* copyTexts(DBusConnection* aConnection,
     }
   }
 
+  TextFragmentList* result(aLatestNode);
+
   if (isText && characterCount > 2) {
     DBusMessage* method =
       dbus_message_new_method_call (aDestination, aPath,
-                                    "org.a11y.atspi.Text",
+                                    gfd::atspi::interface::kText,
                                     "GetText");
     if (!method)
-      return result;
+      return aLatestNode;
 
     static const int32_t start(0);
 
-    bool appended =
+    bool succeeded =
       dbus_message_append_args(method,
                                DBUS_TYPE_INT32, &start,
                                DBUS_TYPE_INT32, &characterCount,
                                DBUS_TYPE_INVALID);
-    if (!appended) {
+    if (!succeeded) {
       dbus_message_unref(method);
-      return result;
+      return aLatestNode;
     }
 
     DBusMessage* response =
@@ -836,11 +866,11 @@ TextFragmentList* copyTexts(DBusConnection* aConnection,
     if (response) {
       const char* data(NULL);
       //GFD_DUMP_DBUS_MESSAGE(response);
-      appended = dbus_message_get_args(response, &error,
+      succeeded = dbus_message_get_args(response, &error,
                                        DBUS_TYPE_STRING, &data,
                                        DBUS_TYPE_INVALID);
       GFD_CHECK_DBUS_ERROR(&error);
-      if (appended && data) {
+      if (succeeded && data) {
         char* str = strdup(data);
         TextFragmentList* node = new TextFragmentList();
         node->data = str;
@@ -860,15 +890,14 @@ TextFragmentList* copyTexts(DBusConnection* aConnection,
     if (!method)
       return result;
 
-    static const char* interface = "org.a11y.atspi.Accessible";
-    static const char* attribute = "ChildCount";
+    static const char* const attribute = "ChildCount";
 
-    bool appended =
-      dbus_message_append_args(method,
-                               DBUS_TYPE_STRING, &interface,
+    bool succeeded =
+      dbus_message_append_args(method, DBUS_TYPE_STRING,
+                               &gfd::atspi::interface::kAccessible,
                                DBUS_TYPE_STRING, &attribute,
                                DBUS_TYPE_INVALID);
-    if (!appended) {
+    if (!succeeded) {
       dbus_message_unref(method);
       return result;
     }
@@ -912,15 +941,15 @@ TextFragmentList* copyTexts(DBusConnection* aConnection,
   for (i = 0; i < childCount; i++) {
     DBusMessage* method =
       dbus_message_new_method_call(aDestination, aPath,
-                                   "org.a11y.atspi.Accessible",
+                                   gfd::atspi::interface::kAccessible,
                                    "GetChildAtIndex");
     if (!method)
       return result;
 
-    bool appended = dbus_message_append_args(method,
-                                             DBUS_TYPE_INT32, &i,
-                                             DBUS_TYPE_INVALID);
-    if (!appended) {
+    bool succeeded = dbus_message_append_args(method,
+                                              DBUS_TYPE_INT32, &i,
+                                              DBUS_TYPE_INVALID);
+    if (!succeeded) {
       dbus_message_unref(method);
       return result;
     }
